@@ -3,147 +3,221 @@
 //  CircularTimer
 //
 //  Created by Afeez Yunus on 29/01/2025.
+//  Remix by eby
 //
 
-import SwiftUI
 import RiveRuntime
+import SwiftUI
+import AVFoundation
 
 struct ContentView: View {
-    var riveTimer = Rivetimer()
-    @State private var currentValue: Double = 0
-    @State private var previousAngle: Double? = nil
-    @State var isTimerRunning: Bool = false
-    @State private var timer: Timer? = nil
-    var body: some View {
+  var riveTimer = Rivetimer()
+  @State private var totalSeconds: Double = 0
+  @State private var previousAngle: Double? = nil
+  @State private var isTimerRunning: Bool = false
+  @State private var timer: Timer? = nil
+  @State private var lastUpdateTime: Date = Date()
+  @State private var isAdjusting: Bool = false
+  @State private var accumulatedDelta: Double = 0
+
+  // Constants for timer configuration
+  private let maxMinutes: Double = 60
+  private let dialSensitivity: Double = 0.4  // Decrease this value for more sensitive rotation
+  private let updateThreshold: TimeInterval = 0.03  // Decrease this value for smoother performance
+  private let snapThreshold: Double = 0.1  // Increase this value for more responsive snapping
+  private let minuteThreshold: Double = 0.8  // Decrease this value for more precise minute tracking
+
+  init() {
+    // Initialize audio player with the timer completion sound
+    // Removed audio player initialization
+  }
+
+  private var timeString: String {
+    let minutes = Int(totalSeconds) / 60
+    let seconds = Int(totalSeconds) % 60
+    return String(format: "%02d:%02d", minutes, seconds)
+  }
+
+  // Computed property to get current minutes
+  private var currentMinutes: Int {
+    Int(totalSeconds) / 60
+  }
+
+  var body: some View {
+    VStack {
+      Spacer()
+      HStack {
+        Spacer()
         VStack {
-            Spacer()
-            HStack{
-                Spacer()
-                VStack{
-                    Text(String(Int(currentValue * 60)))
-                    Text("MIN")
-                    Text("SETUP TIME")
-                        .font(.headline)
-                        .fontDesign(.monospaced)
-                }
-                .font(.system(size: 64, weight: .medium, design: .monospaced))
-                .padding(.bottom, 64)
-                .onChange(of: currentValue) { oldValue, newValue in
-                    // Convert to the 0-60 scale and check whole numbers
-                    if Int(oldValue * 60) != Int(newValue * 60) {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
-                    }
-                }
-                Spacer()
-            }
-                VStack{
-                    riveTimer.view()
-                }
-                .frame(height: 350)
-                .onChange(of: isTimerRunning, { oldValue, newValue in
-                    riveTimer.setInput("isPlaying?", value: isTimerRunning)
-                })
-                .gesture(
-                    DragGesture(minimumDistance: 1)
-                        .onChanged { gesture in
-                            if !isTimerRunning {
-                                let center = CGPoint(x: 150, y: 150)
-                                let vector = CGVector(
-                                    dx: gesture.location.x - center.x,
-                                    dy: gesture.location.y - center.y
-                                )
-                                
-                                let angleInRadians = atan2(vector.dy, vector.dx)
-                                var degrees = (angleInRadians * 180 / .pi + 90)
-                                if degrees < 0 { degrees += 360 }
-                                
-                                // Handle direction and constraints
-                                if let previousAngle = previousAngle {
-                                    var angleDelta = degrees - previousAngle
-                                    
-                                    // Handle crossing the 0/360 boundary
-                                    if angleDelta > 180 {
-                                        angleDelta -= 360
-                                    } else if angleDelta < -180 {
-                                        angleDelta += 360
-                                    }
-                                    
-                                    angleDelta = -angleDelta
-                                    
-                                    // Scale down the sensitivity of the gesture
-                                    let newValue = currentValue + (angleDelta / 540) // Changed from 360 to 720 for less sensitivity
-                                    currentValue = max(0, min(1, newValue))
-                                    
-                                    // Ensure the Rive input gets the full range
-                                    let riveValue = min(60, currentValue * 60)
-                                    riveTimer.setInput("duration", value: riveValue)
-                                }
-                                
-                                previousAngle = degrees
-                            }
-                        }
-                        .onEnded { _ in
-                            previousAngle = nil
-                        }
-                )
-                .onTapGesture {
-                    if !isTimerRunning {
-                        // Start the timer
-                        isTimerRunning = true
-                        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                            if currentValue > 0 {
-                                currentValue -= (0.1 / 60) // Decrease by 0.1 seconds converted to minutes
-                                riveTimer.setInput("duration", value: Double(currentValue * 60))
-                            } else {
-                                // Timer finished
-                                isTimerRunning = false
-                                currentValue = 0
-                                riveTimer.setInput("duration", value: Double(0))
-                                timer?.invalidate()
-                                timer = nil
-                            }
-                        }
-                    } else {
-                        // Stop the timer
-                        isTimerRunning = false
-                        timer?.invalidate()
-                        timer = nil
-                    }
-                }
-           
+          Text(timeString)
+            .monospacedDigit()
+          Text("REVERSE TIME TIMER")
+            .font(.headline)
+            .fontDesign(.monospaced)
+          Text("Remix by eby")
+            .font(.caption)
+            .fontDesign(.monospaced)
+          HStack(spacing: 4) {
+            Image(systemName: "arrow.counterclockwise.circle.fill")
+            Text("Rotate to set time")
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.top, 8)
         }
-        .padding()
-        
-        .background(Color("bg"))
-        .preferredColorScheme(.light)
+        .font(.system(size: 64, weight: .medium, design: .monospaced))
+        .padding(.bottom, 64)
+        .onChange(of: totalSeconds) { oldValue, newValue in
+          let oldMinutes = Int(oldValue) / 60
+          let newMinutes = Int(newValue) / 60
+          if oldMinutes != newMinutes {
+            provideTactileFeedback()
+          }
+        }
+        Spacer()
+      }
+
+      VStack {
+        riveTimer.view()
+      }
+      .frame(height: 350)
+      .onChange(of: isTimerRunning) { _, _ in
+        riveTimer.setInput("isPlaying?", value: isTimerRunning)
+      }
+      .gesture(createTimerGesture())
+      .onTapGesture(perform: handleTimerTap)
     }
+    .padding()
+    .background(Color("bg"))
+    .preferredColorScheme(.light)
+  }
+
+  private func provideTactileFeedback() {
+    let generator = UIImpactFeedbackGenerator(style: .light)
+    generator.impactOccurred()
+  }
+
+  private func createTimerGesture() -> some Gesture {
+    DragGesture(minimumDistance: 1)
+      .onChanged { gesture in
+        handleDragGesture(gesture)
+      }
+      .onEnded { _ in
+        previousAngle = nil
+        isAdjusting = false
+        accumulatedDelta = 0
+      }
+  }
+
+  private func handleDragGesture(_ gesture: DragGesture.Value) {
+    guard !isTimerRunning else { return }
+
+    let now = Date()
+    guard now.timeIntervalSince(lastUpdateTime) >= updateThreshold else { return }
+
+    let center = CGPoint(x: 150, y: 150)
+    let vector = CGVector(
+      dx: gesture.location.x - center.x,
+      dy: gesture.location.y - center.y
+    )
+
+    let angleInRadians = atan2(vector.dy, vector.dx)
+    var degrees = (angleInRadians * 180 / .pi + 90)
+    if degrees < 0 { degrees += 360 }
+
+    if let previousAngle = previousAngle {
+      var angleDelta = degrees - previousAngle
+
+      // Handle crossing the 0/360 boundary
+      if angleDelta > 180 {
+        angleDelta -= 360
+      } else if angleDelta < -180 {
+        angleDelta += 360
+      }
+
+      angleDelta = -angleDelta
+      accumulatedDelta += angleDelta * dialSensitivity
+
+      // Check if we've accumulated enough movement for a minute change
+      if abs(accumulatedDelta) >= minuteThreshold {
+        let minutesToAdd = Int(accumulatedDelta / minuteThreshold)
+        let currentMinutes = totalSeconds / 60
+        let newMinutes = max(0, min(maxMinutes, currentMinutes + Double(minutesToAdd)))
+
+        withAnimation(.easeOut(duration: 0.1)) {
+          totalSeconds = newMinutes * 60
+          riveTimer.setInput("duration", value: newMinutes)
+        }
+
+        // Reset accumulated delta, keeping any remainder
+        accumulatedDelta -= Double(minutesToAdd) * minuteThreshold
+      }
+    }
+
+    previousAngle = degrees
+    lastUpdateTime = now
+    isAdjusting = true
+  }
+
+  private func handleTimerTap() {
+    if !isTimerRunning {
+      startTimer()
+    } else {
+      stopTimer()
+    }
+  }
+
+  private func startTimer() {
+    guard totalSeconds > 0 else { return }
+
+    isTimerRunning = true
+    timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+      if totalSeconds > 0 {
+        totalSeconds -= 1
+        let normalizedValue = Double(currentMinutes)
+        riveTimer.setInput("duration", value: normalizedValue)
+      } else {
+        SoundManager.shared.playTimerEndSound()
+        stopTimer()
+      }
+    }
+  }
+
+  private func stopTimer() {
+    isTimerRunning = false
+    timer?.invalidate()
+    timer = nil
+
+    if totalSeconds <= 0 {
+      totalSeconds = 0
+      riveTimer.setInput("duration", value: Double(0))
+    }
+  }
 }
 
 #Preview {
-    ContentView()
+  ContentView()
 }
 
-
 class Rivetimer: RiveViewModel {
-    @Published var duration: Bool = true
-    
-    init() {
-        super.init(fileName: "timer", stateMachineName: "main")
+  @Published var duration: Bool = true
+
+  init() {
+    super.init(fileName: "timer", stateMachineName: "main")
+  }
+
+  func view() -> some View {
+    super.view()
+
+  }
+  // Subscribe to Rive events
+  @objc func onRiveEventReceived(onRiveEvent riveEvent: RiveEvent) {
+    if let generalEvent = riveEvent as? RiveGeneralEvent {
+      let eventProperties = generalEvent.properties()
+
+      if let timerStage = eventProperties["isPlaying?"] as? Bool {
+        duration = timerStage
+      }
     }
-    
-    func view() -> some View {
-        super.view()
-        
-    }
-    // Subscribe to Rive events
-    @objc func onRiveEventReceived(onRiveEvent riveEvent: RiveEvent) {
-        if let generalEvent = riveEvent as? RiveGeneralEvent {
-            let eventProperties = generalEvent.properties()
-            
-            if let timerStage = eventProperties["isPlaying?"] as? Bool {
-                duration = timerStage
-            }
-        }
-    }
+  }
 }
